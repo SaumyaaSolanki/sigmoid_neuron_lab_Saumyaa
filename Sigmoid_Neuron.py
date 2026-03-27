@@ -38,21 +38,32 @@ def get_data_list(data, indexes):
         lst.append(data[i])
     return lst
 
-def train_test_split(features, labels, test_ratio, seed_value):
+def train_val_test_split(features, labels, val_ratio, test_ratio, seed_value):
     index = []
     length = len(features)
     for i in range(length):
         index.append(i)
+    
     seed = random.Random(seed_value)
     seed.shuffle(index)
-    cut = int(length * (1 - test_ratio))
-    train_index = index[:cut]
-    test_index = index[cut:]
+    
+    test_cut = int(length * (1 - test_ratio))
+    val_cut = int(test_cut - (length * val_ratio))
+    
+    train_index = index[:val_cut]
+    val_index = index[val_cut:test_cut]
+    test_index = index[test_cut:]
+    
     features_train = get_data_list(features, train_index)
     labels_train = get_data_list(labels, train_index)
+    
+    features_val = get_data_list(features, val_index)
+    labels_val = get_data_list(labels, val_index)
+    
     features_test = get_data_list(features, test_index)
     labels_test = get_data_list(labels, test_index)
-    return features_train, labels_train, features_test, labels_test
+    
+    return features_train, labels_train, features_val, labels_val, features_test, labels_test
 
 def activation_function(z):
     prediction = 1/(1 + np.exp(-z))
@@ -75,11 +86,25 @@ def set_up_weights(num_features):
         weights.append(0.0)
     return weights
 
+def calculate_validation_loss(features, labels, weights, bias):
+    loss_list = []
+    for k in range(len(features)):
+        pred = predict_one_vector(features[k], weights, bias)
+        # We keep your awesome bumper fix here so it doesn't blank out!
+        pred = max(min(pred, 0.999999), 0.000001) 
+        
+        if labels[k] == 1:
+            loss_list.append(-1 * np.log(pred))
+        else:
+            loss_list.append(-1 * np.log(1 - pred))
+            
+    return sum(loss_list) / len(loss_list)
+
 def sigmoid(path, learning_rate, epochs, label):
     x, y, feature_names, label_name = load_csv(path)
     folder_name = os.path.splitext(os.path.basename(path))[0]
     os.makedirs(folder_name, exist_ok=True)
-    x_train, y_train, x_test, y_test = train_test_split(x, y, test_ratio=0.3, seed_value=75)
+    x_train, y_train, x_val, y_val, x_test, y_test = train_val_test_split(x, y, val_ratio=0.2, test_ratio=0.3, seed_value=75)
 
     #Beginning values for weights and bias
     num_features = len(x_train[0])
@@ -113,6 +138,10 @@ def sigmoid(path, learning_rate, epochs, label):
             features_row = x_train[k]
             true_label = y_train[k]
             pred_label = predict_one_vector(features_row, weights, bias)
+            
+            # This is the new line that fixes your blank graph!
+            pred_label = max(min(pred_label, 0.999999), 0.000001)
+            
             if(true_label == 1):
                 error = -1 * np.log(pred_label)
                 lossList.append(error)
@@ -241,11 +270,15 @@ def animate_decision_boundary(X, y, history, output_folder):
     fig.write_html(os.path.join(output_folder, 'decision_boundary.html'))
     print("Saved decision_boundary.html — right-click the file and select 'Open with Live Server' or open in a browser.")
 
-def plot_loss_over_epochs(loss_history, output_folder):
-    epochs = range(1, len(loss_history) + 1)
-
+def plot_loss_over_epochs(train_loss, val_loss, output_folder):
+    epochs = range(1, len(train_loss) + 1)
+    
     plt.figure(figsize=(8, 5))
-    plt.plot(epochs, loss_history, label="BCE Loss")
+    # Draw the solid blue Train line
+    plt.plot(epochs, train_loss, label="Train BCE Loss", color="tab:blue")
+    # Draw the dashed orange Validation line
+    plt.plot(epochs, val_loss, label="Validation BCE Loss", color="tab:orange", linestyle="--")
+    
     plt.xlabel("Epoch")
     plt.ylabel("BCE Loss")
     plt.title("Loss Over Epochs")
@@ -253,6 +286,34 @@ def plot_loss_over_epochs(loss_history, output_folder):
     plt.savefig(os.path.join(output_folder, 'loss.png'))
     plt.close()
     print("Saved loss.png — open it in the file explorer to view.")
+
+def show_graph_menu(x_train, y_train, weight_history, loss_history, val_loss_history, max_weight_change_history, num_features, output_folder):
+    print("\n--- Graph Selection ---")
+    print("1. Decision Boundary (animated)")
+    print("2. Loss Over Epochs")
+    print("3. Weight Change Over Epochs")
+    print("4. Return to Main Menu")
+
+    choice = input("\nEnter the number of the graph you want to see: ").strip()
+
+    if choice == "1":
+        if num_features == 2:
+            animate_decision_boundary(x_train, y_train, weight_history, output_folder)
+        else:
+            print("Decision boundary only available for 2 features.")
+        show_graph_menu(x_train, y_train, weight_history, loss_history, val_loss_history, max_weight_change_history, num_features, output_folder)
+    elif choice == "2":
+        # Pass BOTH lists to the upgraded plotting function
+        plot_loss_over_epochs(loss_history, val_loss_history, output_folder)
+        show_graph_menu(x_train, y_train, weight_history, loss_history, val_loss_history, max_weight_change_history, num_features, output_folder)
+    elif choice == "3":
+        plot_weight_change_over_epochs(max_weight_change_history, output_folder)
+        show_graph_menu(x_train, y_train, weight_history, loss_history, val_loss_history, max_weight_change_history, num_features, output_folder)
+    elif choice == "4":
+        main()
+    else:
+        print("Invalid choice. Please enter 1, 2, 3, or 4.")
+        show_graph_menu(x_train, y_train, weight_history, loss_history, val_loss_history, max_weight_change_history, num_features, output_folder)
 
 def plot_weight_change_over_epochs(max_weight_change_history, output_folder):
     epochs = range(1, len(max_weight_change_history) + 1)
@@ -266,13 +327,6 @@ def plot_weight_change_over_epochs(max_weight_change_history, output_folder):
     plt.savefig(os.path.join(output_folder, 'weight_change.png'))
     plt.close()
     print("Saved weight_change.png — open it in the file explorer to view.")
-
-def show_graph_menu(x_train, y_train, weight_history, loss_history, max_weight_change_history, num_features, output_folder):
-    print("\n--- Graph Selection ---")
-    print("1. Decision Boundary (animated)")
-    print("2. Loss Over Epochs")
-    print("3. Weight Change Over Epochs")
-    print("4. Return to Main Menu")
 
     choice = input("\nEnter the number of the graph you want to see: ").strip()
 
@@ -316,7 +370,7 @@ def pickPath():
         return "dataset5.csv"
     elif choice == "6":
         return "dataset6.csv"
-    elif choice == 7"
+    elif choice == "7":
         print("Bye!")
         return "7"
     else:
@@ -326,8 +380,8 @@ def pickPath():
 def main():
     path = pickPath()
     if(path != "7"):
-        learning_rate = 0.01  # Update with your desired learning rate
-        epochs = 1000 # Update with your desired number of epochs
+        learning_rate = 0.1  # Update with your desired learning rate
+        epochs = 14 # Update with your desired number of epochs
 
         sigmoid(path, learning_rate, epochs, label="label")
     
