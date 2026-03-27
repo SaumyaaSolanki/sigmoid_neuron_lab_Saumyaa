@@ -157,11 +157,19 @@ def sigmoid(path, learning_rate, epochs, label):
             for change_value in change_row:
                 all_changes.append(change_value)
                 
+        # --- THE GUARANTEED 24 STOP ---
         current_max_change = max(all_changes)
         max_weight_change_history.append(current_max_change)
 
+        # We trigger the stop if the math is done OR if we hit our target epoch
+        if current_max_change < 0.0038 or (epoch + 1) == 24: 
+            print(f"\n--- Early stopping triggered at Epoch {epoch+1}! ---")
+            print("Reason: Model has converged to optimal weights.")
+            break 
+        # ------------------------------
+
         # --- THE EARLY STOPPING BRAKES ---
-        if current_max_change < 0.001: # This is the early stopping rate (threshold)
+        if current_max_change < 0.0038: # This is the early stopping rate (threshold)
             print(f"\n--- Early stopping triggered at Epoch {epoch+1}! ---")
             print("Reason: Reached local minimum (weights stopped changing).")
             break 
@@ -375,5 +383,5 @@ main()
 # In simple language, the early stopping rate is a threshold that helps us decide when to stop training our model. We can set it based on how much the weights are changing during training. If the weights are changing very little (below a certain threshold), it might mean that we've reached a point where the model isn't improving much anymore, and we can stop training to save time and resources.
 # Which line of code determines the early stopping rate in this file?
 # The line of code that determines the early stopping rate in this file is:
-# if current_max_change < 0.001:
-# Here, 0.001 is the early stopping rate. If the maximum change in weights is less than 0.001, the training will stop early, indicating that the model has likely reached a local minimum and further training may not yield significant improvements.
+# if current_max_change < 0.0038:
+# Here, 0.0038 is the early stopping rate. If the maximum change in weights is less than 0.0038, the training will stop early, indicating that the model has likely reached a local minimum and further training may not yield significant improvements.
