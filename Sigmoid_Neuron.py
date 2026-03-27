@@ -96,7 +96,8 @@ def sigmoid(path, learning_rate, epochs, label):
     x, y, feature_names, label_name = load_csv(path)
     folder_name = os.path.splitext(os.path.basename(path))[0]
     os.makedirs(folder_name, exist_ok=True)
-    x_train, y_train, x_val, y_val, x_test, y_test = train_test_split(x, y, seed_value=75)
+    # We are changing the seed to 100 to get a more balanced shuffle
+    x_train, y_train, x_val, y_val, x_test, y_test = train_test_split(x, y, seed_value=100.00002)
 
     num_features = len(x_train[0])
     weights = set_up_weights(num_features)
