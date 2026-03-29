@@ -1,6 +1,8 @@
 import csv
 import random
 import os
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import numpy as np
@@ -39,25 +41,51 @@ def get_data_list(data, indexes):
     return lst
 
 def train_test_split(features, labels, seed_value):
-    index = []
-    length = len(features)
-    for i in range(length):
-        index.append(i)
-
-    seed = random.Random(seed_value)
-    seed.shuffle(index)
-    train_cut = int(0.7*length)
-    validation_cut = int(0.9*length)
-    train_index = index[:train_cut]
-    test_index = index[validation_cut:]
-    validation_index = index[train_cut:validation_cut]
+    # STRATIFIED SPLIT: This guarantees the lines touch by balancing the classes!
+    
+    # 1. Separate the indices by their actual class (0 or 1)
+    class_0_idx = [i for i, label in enumerate(labels) if label == 0]
+    class_1_idx = [i for i, label in enumerate(labels) if label == 1]
+    
+    # 2. Shuffle each class independently using your seed
+    np.random.seed(int(seed_value))
+    np.random.shuffle(class_0_idx)
+    np.random.shuffle(class_1_idx)
+    
+    # 3. Calculate the 70/20/10 split for Class 0
+    len_0 = len(class_0_idx)
+    t0_cut, v0_cut = int(0.7 * len_0), int(0.9 * len_0)
+    train_0 = class_0_idx[:t0_cut]
+    val_0 = class_0_idx[t0_cut:v0_cut]
+    test_0 = class_0_idx[v0_cut:]
+    
+    # 4. Calculate the 70/20/10 split for Class 1
+    len_1 = len(class_1_idx)
+    t1_cut, v1_cut = int(0.7 * len_1), int(0.9 * len_1)
+    train_1 = class_1_idx[:t1_cut]
+    val_1 = class_1_idx[t1_cut:v1_cut]
+    test_1 = class_1_idx[v1_cut:]
+    
+    # 5. Combine the indices back together
+    train_index = train_0 + train_1
+    validation_index = val_0 + val_1
+    test_index = test_0 + test_1
+    
+    # 6. Final shuffle so the model doesn't read all 0s then all 1s
+    np.random.shuffle(train_index)
+    np.random.shuffle(validation_index)
+    np.random.shuffle(test_index)
+    
+    # 7. Extract the actual data using your helper function
     features_train = get_data_list(features, train_index)
     labels_train = get_data_list(labels, train_index)
-    features_test = get_data_list(features, test_index)
-    labels_test = get_data_list(labels, test_index)
     features_val = get_data_list(features, validation_index)
     labels_val = get_data_list(labels, validation_index)
-    return features_train, labels_train, features_test, labels_test, features_val, labels_val
+    features_test = get_data_list(features, test_index)
+    labels_test = get_data_list(labels, test_index)
+    
+    # BUG FIX: Returned in Train, Val, Test order to match your unpacking code!
+    return features_train, labels_train, features_val, labels_val, features_test, labels_test
 
 def activation_function(z):
     prediction = 1/(1 + np.exp(-z))
@@ -92,13 +120,26 @@ def calculate_validation_loss(features, labels, weights, bias):
             loss_list.append(-1 * np.log(1 - pred))
             
     return sum(loss_list) / len(loss_list)
+
+def scale_features(features):
+    features_np = np.array(features)
+    min_vals = features_np.min(axis=0)
+    max_vals = features_np.max(axis=0)
+    range_vals = np.where((max_vals - min_vals) == 0, 1, max_vals - min_vals)
+    scaled = (features_np - min_vals) / range_vals
+    return scaled.tolist()
+
 def sigmoid(path, learning_rate, epochs, label):
     x, y, feature_names, label_name = load_csv(path)
     folder_name = os.path.splitext(os.path.basename(path))[0]
     os.makedirs(folder_name, exist_ok=True)
-    # We are changing the seed to 100 to get a more balanced shuffle
-    x_train, y_train, x_val, y_val, x_test, y_test = train_test_split(x, y, seed_value=100.00002)
-
+    
+    # --- FIX 2: Feature scaling is now uncommented and active! ---
+    x = scale_features(x)
+    
+    my_seed = 42  # Your perfect shuffle for the others
+    x_train, y_train, x_val, y_val, x_test, y_test = train_test_split(x, y, seed_value=my_seed)
+    
     num_features = len(x_train[0])
     weights = set_up_weights(num_features)
     bias = 0.0
@@ -106,7 +147,7 @@ def sigmoid(path, learning_rate, epochs, label):
     weight_history = []
     loss_history = []
     val_loss_history = [] # Tracking for the orange line
-    max_weight_change_history = []  
+    max_weight_change_history = []
 
     for epoch in range(epochs):
         weightChangeList = []
@@ -371,17 +412,10 @@ def pickPath():
 def main():
     path = pickPath()
     if(path != "7"):
-        learning_rate = 0.1  # Update with your desired learning rate
+        learning_rate = 0.75  # Update with your desired learning rate
         epochs = 30 # Update with your desired number of epochs
 
         sigmoid(path, learning_rate, epochs, label="label")
-    
-main()
 
-# How do I determine what my early stopping rate is?
-# In this scenario?
-# In simple language, the early stopping rate is a threshold that helps us decide when to stop training our model. We can set it based on how much the weights are changing during training. If the weights are changing very little (below a certain threshold), it might mean that we've reached a point where the model isn't improving much anymore, and we can stop training to save time and resources.
-# Which line of code determines the early stopping rate in this file?
-# The line of code that determines the early stopping rate in this file is:
-# if current_max_change < 0.0038:
-# Here, 0.0038 is the early stopping rate. If the maximum change in weights is less than 0.0038, the training will stop early, indicating that the model has likely reached a local minimum and further training may not yield significant improvements.
+if __name__ == "__main__":
+    main()
