@@ -9,7 +9,6 @@ import numpy as np
 from matplotlib.widgets import Button
 import plotly.graph_objects as go
 
-
 def load_csv(path):
     with open(path, "r", newline="") as file:
         file_reader = csv.reader(file)
@@ -41,42 +40,33 @@ def get_data_list(data, indexes):
     return lst
 
 def train_test_split(features, labels, seed_value):
-    # STRATIFIED SPLIT: This guarantees the lines touch by balancing the classes!
-    
-    # 1. Separate the indices by their actual class (0 or 1)
     class_0_idx = [i for i, label in enumerate(labels) if label == 0]
     class_1_idx = [i for i, label in enumerate(labels) if label == 1]
     
-    # 2. Shuffle each class independently using your seed
     np.random.seed(int(seed_value))
     np.random.shuffle(class_0_idx)
     np.random.shuffle(class_1_idx)
     
-    # 3. Calculate the 70/20/10 split for Class 0
     len_0 = len(class_0_idx)
     t0_cut, v0_cut = int(0.7 * len_0), int(0.9 * len_0)
     train_0 = class_0_idx[:t0_cut]
     val_0 = class_0_idx[t0_cut:v0_cut]
     test_0 = class_0_idx[v0_cut:]
     
-    # 4. Calculate the 70/20/10 split for Class 1
     len_1 = len(class_1_idx)
     t1_cut, v1_cut = int(0.7 * len_1), int(0.9 * len_1)
     train_1 = class_1_idx[:t1_cut]
     val_1 = class_1_idx[t1_cut:v1_cut]
     test_1 = class_1_idx[v1_cut:]
     
-    # 5. Combine the indices back together
     train_index = train_0 + train_1
     validation_index = val_0 + val_1
     test_index = test_0 + test_1
     
-    # 6. Final shuffle so the model doesn't read all 0s then all 1s
     np.random.shuffle(train_index)
     np.random.shuffle(validation_index)
     np.random.shuffle(test_index)
     
-    # 7. Extract the actual data using your helper function
     features_train = get_data_list(features, train_index)
     labels_train = get_data_list(labels, train_index)
     features_val = get_data_list(features, validation_index)
@@ -84,34 +74,59 @@ def train_test_split(features, labels, seed_value):
     features_test = get_data_list(features, test_index)
     labels_test = get_data_list(labels, test_index)
     
-    # BUG FIX: Returned in Train, Val, Test order to match your unpacking code!
     return features_train, labels_train, features_val, labels_val, features_test, labels_test
 
 def activation_function(z):
-    prediction = 1/(1 + np.exp(-z))
-    return prediction
+    return 1/(1 + np.exp(-z)) 
 
 def dot_product_one_vector(features_row, weights, bias):
-    total = 0
-    for i in range(len(features_row)):
-        total += weights[i] * features_row[i]
-    total += bias
-    return total
+    total = sum(weights[i] * features_row[i] for i in range(len(features_row)))
+    return total + bias
 
 def predict_one_vector(features_row, weights, bias):
     total = dot_product_one_vector(features_row, weights, bias)
     return activation_function(total)
 
 def set_up_weights(num_features):
-    weights = []
-    for value in range(num_features):
-        weights.append(0.0)
-    return weights
+    return [0.0 for _ in range(num_features)]
 
-def calculate_validation_loss(features, labels, weights, bias):
+def round_to_base6(value, precision=4):
+    multiplier = 6 ** precision
+    return round(value * multiplier) / multiplier
+
+def format_as_base6(value, precision=4):
+    """Converts a base-10 float into a true Base-6 string for printing."""
+    sign = "-" if value < 0 else ""
+    value = abs(value)
+    
+    # 1. Convert the whole number part
+    integer_part = int(value)
+    if integer_part == 0:
+        int_str = "0"
+    else:
+        int_str = ""
+        temp = integer_part
+        while temp > 0:
+            int_str = str(temp % 6) + int_str
+            temp //= 6
+            
+    # 2. Convert the fractional part
+    fractional_part = value - int(value)
+    frac_str = ""
+    for _ in range(precision):
+        fractional_part *= 6
+        digit = int(fractional_part)
+        frac_str += str(digit)
+        fractional_part -= digit
+        
+    return f"{sign}{int_str}.{frac_str}"
+
+def calculate_validation_loss(features, labels, weights, bias, is_base6=False):
     loss_list = []
     for k in range(len(features)):
         pred = predict_one_vector(features[k], weights, bias)
+        if is_base6:
+            pred = round_to_base6(pred) 
         pred = max(min(pred, 0.999999), 0.000001) 
         
         if labels[k] == 1:
@@ -134,119 +149,135 @@ def sigmoid(path, learning_rate, epochs, label):
     folder_name = os.path.splitext(os.path.basename(path))[0]
     os.makedirs(folder_name, exist_ok=True)
     
-    # --- FIX 2: Feature scaling is now uncommented and active! ---
     x = scale_features(x)
-    
-    my_seed = 42  # Your perfect shuffle for the others
+    my_seed = 42 
     x_train, y_train, x_val, y_val, x_test, y_test = train_test_split(x, y, seed_value=my_seed)
-    
     num_features = len(x_train[0])
-    weights = set_up_weights(num_features)
-    bias = 0.0
     
-    weight_history = []
-    loss_history = []
-    val_loss_history = [] # Tracking for the orange line
-    max_weight_change_history = []
+    # Dual Variables Setup
+    weights_10 = set_up_weights(num_features)
+    bias_10 = 0.0
+    weights_6 = set_up_weights(num_features)
+    bias_6 = 0.0
+    
+    # Dual History Tracking
+    hist_w_10 = []
+    hist_w_6 = []
+    
+    hist_train_loss_10 = []
+    hist_train_loss_6 = []
+    
+    hist_val_loss_10 = []
+    hist_val_loss_6 = []
+    
+    hist_max_change_10 = []
+    hist_max_change_6 = []
+
+    log_10 = []
+    log_6 = []
+
+    print("\nTraining in progress. Please wait...")
 
     for epoch in range(epochs):
-        weightChangeList = []
-        lossList = []
+        changes_10 = []
+        changes_6 = []
         
         for i in range(len(x_train)):
-            weightChangeList.append([])
             features_row = x_train[i]
             true_label = y_train[i]
-            pred_label = predict_one_vector(features_row, weights, bias)
             
+            # --- BASE 10 UPDATE ---
+            pred_10 = predict_one_vector(features_row, weights_10, bias_10)
             for j in range(num_features):
-                change_in_weights = learning_rate * (pred_label - true_label) * features_row[j]
-                weightChangeList[i].append(abs(change_in_weights))
-                weights[j] = weights[j] - change_in_weights
-                
-            change_in_bias = learning_rate * (pred_label - true_label)
-            weightChangeList[i].append(abs(change_in_bias))
-            bias -= change_in_bias
-
-            weight_history.append((weights.copy(), bias))
+                c_10 = learning_rate * (pred_10 - true_label) * features_row[j]
+                weights_10[j] -= c_10
+                changes_10.append(abs(c_10))
+            cb_10 = learning_rate * (pred_10 - true_label)
+            bias_10 -= cb_10
+            changes_10.append(abs(cb_10))
+            hist_w_10.append((weights_10.copy(), bias_10))
             
+            # --- BASE 6 UPDATE ---
+            pred_6 = round_to_base6(predict_one_vector(features_row, weights_6, bias_6))
+            for j in range(num_features):
+                c_6 = round_to_base6(learning_rate * (pred_6 - true_label) * features_row[j])
+                weights_6[j] = round_to_base6(weights_6[j] - c_6)
+                changes_6.append(abs(c_6))
+            cb_6 = round_to_base6(learning_rate * (pred_6 - true_label))
+            bias_6 = round_to_base6(bias_6 - cb_6)
+            changes_6.append(abs(cb_6))
+            hist_w_6.append((weights_6.copy(), bias_6))
+            
+        # --- TRAINING LOSS CALCULATION ---
+        t_loss_10_list = []
+        t_loss_6_list = []
+        
         for k in range(len(x_train)):
-            features_row = x_train[k]
-            true_label = y_train[k]
-            pred_label = predict_one_vector(features_row, weights, bias)
+            f_row = x_train[k]
+            t_lab = y_train[k]
             
-            pred_label = max(min(pred_label, 0.999999), 0.000001)
+            p_10 = max(min(predict_one_vector(f_row, weights_10, bias_10), 0.999999), 0.000001)
+            t_loss_10_list.append(-1 * np.log(p_10) if t_lab == 1 else -1 * np.log(1 - p_10))
             
-            if(true_label == 1):
-                # The tiny + 1e-15 prevents a 'Log of Zero' error from breaking the whole thing.
-                error = -1 * np.log(pred_label + 1e-15)
-                lossList.append(error)
-            elif(true_label == 0):
-                error = -1 * np.log(1 - pred_label + 1e-15)
-                lossList.append(error)
+            p_6 = max(min(round_to_base6(predict_one_vector(f_row, weights_6, bias_6)), 0.999999), 0.000001)
+            t_loss_6_list.append(-1 * np.log(p_6) if t_lab == 1 else -1 * np.log(1 - p_6))
 
-        # Compute training loss for blue line
-        epoch_bce = sum(lossList) / len(lossList)
-        loss_history.append(epoch_bce)
+        hist_train_loss_10.append(sum(t_loss_10_list) / len(t_loss_10_list))
+        hist_train_loss_6.append(sum(t_loss_6_list) / len(t_loss_6_list))
         
-        # Compute validation loss for orange line
-        val_loss = calculate_validation_loss(x_val, y_val, weights, bias)
-        val_loss_history.append(val_loss)
+        # --- VALIDATION LOSS CALCULATION ---
+        v_loss_10 = calculate_validation_loss(x_val, y_val, weights_10, bias_10, is_base6=False)
+        hist_val_loss_10.append(v_loss_10)
+
+        v_loss_6 = calculate_validation_loss(x_val, y_val, weights_6, bias_6, is_base6=True)
+        hist_val_loss_6.append(v_loss_6)
         
-        all_changes = []
-        for change_row in weightChangeList:
-            for change_value in change_row:
-                all_changes.append(change_value)
-                
-        # --- THE GUARANTEED 24 STOP ---
-        current_max_change = max(all_changes)
-        max_weight_change_history.append(current_max_change)
+        # --- SAVE LOGS INSTEAD OF PRINTING ---
+        log_10.append(f"Epoch {epoch}: W0: {weights_10[0]:.5f} | W1: {weights_10[1]:.5f} | Bias: {bias_10:.5f} | T-Loss: {hist_train_loss_10[-1]:.5f}")
+        
+        w0_str = format_as_base6(weights_6[0])
+        w1_str = format_as_base6(weights_6[1])
+        b_str = format_as_base6(bias_6)
+        l_str = format_as_base6(hist_train_loss_6[-1])
+        log_6.append(f"Epoch {epoch}: W0: {w0_str} | W1: {w1_str} | Bias: {b_str} | T-Loss: {l_str}")
+        
+        # --- EARLY STOPPING CHECK ---
+        mc_10 = max(changes_10)
+        mc_6 = max(changes_6)
+        hist_max_change_10.append(mc_10)
+        hist_max_change_6.append(mc_6)
 
-        # We trigger the stop if the math is done OR if we hit our target epoch
-        if current_max_change < 0.0038 or (epoch + 1) == 24: 
+        if mc_10 < 0.0038 and mc_6 < 0.0038:  
             print(f"\n--- Early stopping triggered at Epoch {epoch+1}! ---")
-            print("Reason: Model has converged to optimal weights.")
             break 
-        # ------------------------------
+            
+        if (epoch + 1) == epochs: 
+            print(f"\n--- Training completed at Epoch {epoch+1}. ---")
+            break
+            
+    # Send all this data to the super menu
+    data_pack = {
+        'x_train': x_train, 'y_train': y_train, 'folder': folder_name, 'num_features': num_features,
+        'logs_10': log_10, 'logs_6': log_6,
+        'w_hist_10': hist_w_10, 'w_hist_6': hist_w_6,
+        't_loss_10': hist_train_loss_10, 't_loss_6': hist_train_loss_6,
+        'v_loss_10': hist_val_loss_10, 'v_loss_6': hist_val_loss_6,
+        'mc_10': hist_max_change_10, 'mc_6': hist_max_change_6
+    }
+    
+    show_graph_menu(data_pack)
 
-        # --- THE EARLY STOPPING BRAKES ---
-        if current_max_change < 0.0038: # This is the early stopping rate (threshold)
-            print(f"\n--- Early stopping triggered at Epoch {epoch+1}! ---")
-            print("Reason: Reached local minimum (weights stopped changing).")
-            break 
-        # ---------------------------------
 
-    # Passing all 8 arguments correctly!
-    show_graph_menu(x_train, y_train, weight_history, loss_history, val_loss_history, max_weight_change_history, num_features, folder_name)
+# --- VISUALIZATION FUNCTIONS ---
 
-def update(frame, history, ax, line):
-        weights, bias = history[frame]
-        w1, w2 = weights
-
-        if w2 != 0:
-            x_vals = np.array(ax.get_xlim())
-            y_vals = -(w1 * x_vals + bias) / w2
-            line.set_data(x_vals, y_vals)
-        elif w1 != 0:
-            x_boundary = -bias / w1
-            line.set_data([x_boundary, x_boundary], ax.get_ylim())
-        else:
-            print("No update")
-
-        return line,
-
-def animate_decision_boundary(X, y, history, output_folder):
+def animate_decision_boundary(X, y, history, output_folder, filename, title):
     features = np.array(X)
     labels = np.array(y)
-
-    x_min = features[:, 0].min() - 1
-    x_max = features[:, 0].max() + 1
-    y_min = features[:, 1].min() - 1
-    y_max = features[:, 1].max() + 1
+    x_min, x_max = features[:, 0].min() - 1, features[:, 0].max() + 1
+    y_min, y_max = features[:, 1].min() - 1, features[:, 1].max() + 1
 
     is_Zero = [v == 0 for v in labels]
     is_One = [v == 1 for v in labels]
-
     sampled_history = history[::10]
 
     frames = []
@@ -256,132 +287,116 @@ def animate_decision_boundary(X, y, history, output_folder):
             x_vals = [x_min, x_max]
             y_vals = [-(w1 * x + bias) / w2 for x in x_vals]
         elif w1 != 0:
-            x_vals = [-bias / w1, -bias / w1]
-            y_vals = [y_min, y_max]
+            x_vals, y_vals = [-bias / w1, -bias / w1], [y_min, y_max]
         else:
-            x_vals = []
-            y_vals = []
+            x_vals, y_vals = [], []
 
         frames.append(go.Frame(
             data=[
-                go.Scatter(x=features[is_Zero, 0], y=features[is_Zero, 1],
-                           mode='markers', marker=dict(color='red', line=dict(color='black', width=1)),
-                           name='Class 0'),
-                go.Scatter(x=features[is_One, 0], y=features[is_One, 1],
-                           mode='markers', marker=dict(color='green', line=dict(color='black', width=1)),
-                           name='Class 1'),
-                go.Scatter(x=x_vals, y=y_vals,
-                           mode='lines', line=dict(color='black', dash='dash', width=2),
-                           name='Decision Boundary')
-            ],
-            name=str(i)
+                go.Scatter(x=features[is_Zero, 0], y=features[is_Zero, 1], mode='markers', marker=dict(color='red', line=dict(color='black', width=1)), name='Class 0'),
+                go.Scatter(x=features[is_One, 0], y=features[is_One, 1], mode='markers', marker=dict(color='green', line=dict(color='black', width=1)), name='Class 1'),
+                go.Scatter(x=x_vals, y=y_vals, mode='lines', line=dict(color='black', dash='dash', width=2), name='Decision Boundary')
+            ], name=str(i)
         ))
 
     w1, w2 = sampled_history[0][0]
     bias0 = sampled_history[0][1]
-    if w2 != 0:
-        x_vals0 = [x_min, x_max]
-        y_vals0 = [-(w1 * x + bias0) / w2 for x in x_vals0]
-    else:
-        x_vals0 = []
-        y_vals0 = []
+    x_vals0, y_vals0 = ([x_min, x_max], [-(w1 * x + bias0) / w2 for x in [x_min, x_max]]) if w2 != 0 else ([], [])
 
     fig = go.Figure(
         data=[
-            go.Scatter(x=features[is_Zero, 0], y=features[is_Zero, 1],
-                       mode='markers', marker=dict(color='red', line=dict(color='black', width=1)),
-                       name='Class 0'),
-            go.Scatter(x=features[is_One, 0], y=features[is_One, 1],
-                       mode='markers', marker=dict(color='green', line=dict(color='black', width=1)),
-                       name='Class 1'),
-            go.Scatter(x=x_vals0, y=y_vals0,
-                       mode='lines', line=dict(color='black', dash='dash', width=2),
-                       name='Decision Boundary')
-        ],
-        frames=frames
+            go.Scatter(x=features[is_Zero, 0], y=features[is_Zero, 1], mode='markers', marker=dict(color='red', line=dict(color='black', width=1)), name='Class 0'),
+            go.Scatter(x=features[is_One, 0], y=features[is_One, 1], mode='markers', marker=dict(color='green', line=dict(color='black', width=1)), name='Class 1'),
+            go.Scatter(x=x_vals0, y=y_vals0, mode='lines', line=dict(color='black', dash='dash', width=2), name='Decision Boundary')
+        ], frames=frames
     )
 
     fig.update_layout(
-        title='Sigmoid Decision Boundary (After Each Update)',
-        xaxis=dict(range=[x_min, x_max], title='Feature 1'),
-        yaxis=dict(range=[y_min, y_max], title='Feature 2'),
-        updatemenus=[dict(
-            type='buttons',
-            showactive=False,
-            buttons=[
-                dict(label='Play', method='animate',
-                     args=[None, dict(frame=dict(duration=50, redraw=True), fromcurrent=True)]),
-                dict(label='Pause', method='animate',
-                     args=[[None], dict(frame=dict(duration=0, redraw=False), mode='immediate')])
-            ]
-        )],
-        sliders=[dict(
-            steps=[dict(method='animate', args=[[str(i)], dict(mode='immediate')], label=str(i))
-                   for i in range(len(frames))],
-            currentvalue=dict(prefix='Frame: ')
-        )]
+        title=title, xaxis=dict(range=[x_min, x_max], title='Feature 1'), yaxis=dict(range=[y_min, y_max], title='Feature 2'),
+        updatemenus=[dict(type='buttons', showactive=False, buttons=[
+            dict(label='Play', method='animate', args=[None, dict(frame=dict(duration=50, redraw=True), fromcurrent=True)]),
+            dict(label='Pause', method='animate', args=[[None], dict(frame=dict(duration=0, redraw=False), mode='immediate')])
+        ])],
+        sliders=[dict(steps=[dict(method='animate', args=[[str(i)], dict(mode='immediate')], label=str(i)) for i in range(len(frames))], currentvalue=dict(prefix='Frame: '))]
     )
+    filepath = os.path.join(output_folder, filename)
+    fig.write_html(filepath)
+    print(f"Saved {filename} — right-click and select 'Open with Live Server' or open in a browser.")
 
-    fig.write_html(os.path.join(output_folder, 'decision_boundary.html'))
-    print("Saved decision_boundary.html — right-click the file and select 'Open with Live Server' or open in a browser.")
 
-def plot_loss_over_epochs(train_loss, val_loss, output_folder):
-    epochs = range(1, len(train_loss) + 1)
-    
+def plot_graphs(y_data_dict, x_label, y_label, title, output_folder, filename):
     plt.figure(figsize=(8, 5))
-    plt.plot(epochs, train_loss, label="Train BCE Loss", color="tab:blue")
-    plt.plot(epochs, val_loss, label="Validation BCE Loss", color="tab:orange", linestyle="--")
-    
-    plt.xlabel("Epoch")
-    plt.ylabel("BCE Loss")
-    plt.title("Loss Over Epochs")
+    for label, data in y_data_dict.items():
+        epochs = range(1, len(data) + 1)
+        plt.plot(epochs, data, label=label)
+        
+    plt.xlabel(x_label)
+    plt.ylabel(y_label)
+    plt.title(title)
     plt.legend()
-    plt.savefig(os.path.join(output_folder, 'loss.png'))
+    filepath = os.path.join(output_folder, filename)
+    plt.savefig(filepath)
     plt.close()
-    print("Saved loss.png — open it in the file explorer to view.")
+    print(f"Saved {filename} — open it in the file explorer to view.")
 
-def plot_weight_change_over_epochs(max_weight_change_history, output_folder):
-    epochs = range(1, len(max_weight_change_history) + 1)
 
-    plt.figure(figsize=(8, 5))
-    plt.plot(epochs, max_weight_change_history, label="Max Weight Change")
-    plt.xlabel("Epoch")
-    plt.ylabel("Max Absolute Weight Change")
-    plt.title("Weight Change Over Epochs")
-    plt.legend()
-    plt.savefig(os.path.join(output_folder, 'weight_change.png'))
-    plt.close()
-    print("Saved weight_change.png — open it in the file explorer to view.")
+# --- SUPER MENU ---
 
-def show_graph_menu(x_train, y_train, weight_history, loss_history, val_loss_history, max_weight_change_history, num_features, output_folder):
-    print("\n--- Graph Selection ---")
-    print("1. Decision Boundary (animated)")
-    print("2. Loss Over Epochs")
-    print("3. Weight Change Over Epochs")
-    print("4. Return to Main Menu")
+def show_graph_menu(dp):
+    while True:
+        print("\n" + "="*30)
+        print("      OUTPUT DATA MENU      ")
+        print("="*30)
+        print("[ View Calculations ]")
+        print("  1. Print Base 10 Logs")
+        print("  2. Print Base 6 Logs (True Base-6 Format)")
+        print("\n[ Base 10 Graphs ]")
+        print("  3. Base 10 Decision Boundary (Animated)")
+        print("  4. Base 10 Loss Graph")
+        print("  5. Base 10 Weight Changes")
+        print("\n[ Base 6 Graphs ]")
+        print("  6. Base 6 Decision Boundary (Animated)")
+        print("  7. Base 6 Loss Graph")
+        print("  8. Base 6 Weight Changes")
+        print("\n[ Comparison Graphs ]")
+        print("  9. Compare Loss (Base 10 vs Base 6)")
+        print(" 10. Compare Weight Changes (Base 10 vs Base 6)")
+        print("\n  0. Exit to Main Menu")
+        print("="*30)
 
-    choice = input("\nEnter the number of the graph you want to see: ").strip()
+        choice = input("Select an option (0-10): ").strip()
 
-    if choice == "1":
-        if num_features == 2:
-            animate_decision_boundary(x_train, y_train, weight_history, output_folder)
+        if choice == "1":
+            print("\n--- BASE 10 LOGS ---")
+            for log in dp['logs_10']: print(log)
+        elif choice == "2":
+            print("\n--- BASE 6 LOGS ---")
+            for log in dp['logs_6']: print(log)
+        elif choice == "3":
+            if dp['num_features'] == 2: animate_decision_boundary(dp['x_train'], dp['y_train'], dp['w_hist_10'], dp['folder'], "db_base10.html", "Base 10 Decision Boundary")
+            else: print("Decision boundary only available for 2 features.")
+        elif choice == "4":
+            plot_graphs({"Train Loss": dp['t_loss_10'], "Val Loss": dp['v_loss_10']}, "Epoch", "BCE Loss", "Base 10 Loss", dp['folder'], "loss_base10.png")
+        elif choice == "5":
+            plot_graphs({"Max Change": dp['mc_10']}, "Epoch", "Change", "Base 10 Weight Changes", dp['folder'], "weight_change_base10.png")
+        elif choice == "6":
+            if dp['num_features'] == 2: animate_decision_boundary(dp['x_train'], dp['y_train'], dp['w_hist_6'], dp['folder'], "db_base6.html", "Base 6 Decision Boundary")
+            else: print("Decision boundary only available for 2 features.")
+        elif choice == "7":
+            plot_graphs({"Train Loss": dp['t_loss_6'], "Val Loss": dp['v_loss_6']}, "Epoch", "BCE Loss", "Base 6 Loss", dp['folder'], "loss_base6.png")
+        elif choice == "8":
+            plot_graphs({"Max Change": dp['mc_6']}, "Epoch", "Change", "Base 6 Weight Changes", dp['folder'], "weight_change_base6.png")
+        elif choice == "9":
+            plot_graphs({"Base 10 Val Loss": dp['v_loss_10'], "Base 6 Val Loss": dp['v_loss_6']}, "Epoch", "BCE Loss", "Validation Loss Comparison", dp['folder'], "loss_comparison.png")
+        elif choice == "10":
+            plot_graphs({"Base 10 Changes": dp['mc_10'], "Base 6 Changes": dp['mc_6']}, "Epoch", "Change", "Weight Change Comparison", dp['folder'], "change_comparison.png")
+        elif choice == "0":
+            break
         else:
-            print("Decision boundary only available for 2 features.")
-        show_graph_menu(x_train, y_train, weight_history, loss_history, val_loss_history, max_weight_change_history, num_features, output_folder)
-    elif choice == "2":
-        plot_loss_over_epochs(loss_history, val_loss_history, output_folder)
-        show_graph_menu(x_train, y_train, weight_history, loss_history, val_loss_history, max_weight_change_history, num_features, output_folder)
-    elif choice == "3":
-        plot_weight_change_over_epochs(max_weight_change_history, output_folder)
-        show_graph_menu(x_train, y_train, weight_history, loss_history, val_loss_history, max_weight_change_history, num_features, output_folder)
-    elif choice == "4":
-        main()
-    else:
-        print("Invalid choice. Please enter 1, 2, 3, or 4.")
-        show_graph_menu(x_train, y_train, weight_history, loss_history, val_loss_history, max_weight_change_history, num_features, output_folder)
+            print("Invalid choice. Please try again.")
 
 def pickPath():
-    print("Please select a dataset:")
+    print("\nPlease select a dataset:")
     print("1. Dataset 1")
     print("2. Dataset 2")
     print("3. Dataset 3")
@@ -390,31 +405,24 @@ def pickPath():
     print("6. Dataset 6")
     print("7. Exit")
     choice = input("Enter the number of the dataset you want to use: ").strip()
-    if choice == "1":
-        return "dataset1.csv"
-    elif choice == "2":
-        return "dataset2.csv"
-    elif choice == "3":
-        return "dataset3.csv"
-    elif choice == "4":
-        return "dataset4.csv"
-    elif choice == "5":
-        return "dataset5.csv"
-    elif choice == "6":
-        return "dataset6.csv"
+    
+    datasets = {"1": "dataset1.csv", "2": "dataset2.csv", "3": "dataset3.csv", "4": "dataset4.csv", "5": "dataset5.csv", "6": "dataset6.csv"}
+    if choice in datasets:
+        return datasets[choice]
     elif choice == "7":
         print("Bye!")
         return "7"
     else:
-        print("Invalid choice. Please enter 1, 2, 3, 4, 5, 6, 7")
+        print("Invalid choice. Please enter 1-7.")
         return pickPath()
 
 def main():
-    path = pickPath()
-    if(path != "7"):
-        learning_rate = 0.75  # Update with your desired learning rate
-        epochs = 30 # Update with your desired number of epochs
-
+    while True:
+        path = pickPath()
+        if path == "7":
+            break
+        learning_rate = 0.75  
+        epochs = 30 
         sigmoid(path, learning_rate, epochs, label="label")
 
 if __name__ == "__main__":
